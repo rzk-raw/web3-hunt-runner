@@ -79,7 +79,7 @@ jobs:
       - name: Install solc + crytic-compile
         run: |
           python3 -m pip install --upgrade pip
-          pip install solc-select crytic-compile
+          pip install solc-select crytic-compile slither-analyzer
           solc-select install 0.8.28
           solc-select use 0.8.28
           solc --version
@@ -94,6 +94,7 @@ jobs:
           # contract file — the old run passed --config /dev/null and
           # never compiled anything.
           echidna . --contract "${{ inputs.contract }}" \
+            --test-mode assertion \
             --test-limit "${{ inputs.test_limit }}" \
             2>&1 | tee echidna.log || true
           echo "--- echidna.log ---"
