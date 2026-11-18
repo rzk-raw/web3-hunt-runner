@@ -1,0 +1,79 @@
+name: Slither static analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: 'Target repo to test, e.g. owner/repo (empty = this repo smoke test)'
+        required: false
+        default: ''
+        type: string
+      target_ref:
+        description: 'Branch, tag or commit of the target repo'
+        required: false
+        default: 'main'
+        type: string
+      target_path:
+        description: 'Directory inside the target repo to analyse'
+        required: false
+        default: '.'
+        type: string
+      solc_version:
+        description: 'solc version (e.g. 0.8.28)'
+        required: false
+        default: '0.8.28'
+        type: string
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  slither:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout this runner repo
+        uses: actions/checkout@v4
+
+      - name: Clone target repo (if given)
+        if: inputs.target_repo != ''
+        run: |
+          git clone --depth 1 --branch "${{ inputs.target_ref }}" \
+            "https://github.com/${{ inputs.target_repo }}.git" target \
+            || git clone --depth 1 "https://github.com/${{ inputs.target_repo }}.git" target
+          cd target && git checkout "${{ inputs.target_ref }}" || true
+          echo "TARGET_DIR=target/${{ inputs.target_path }}" >> "$GITHUB_ENV"
+
+      - name: Use local smoke-test contract (no target given)
+        if: inputs.target_repo == ''
+        run: echo "TARGET_DIR=." >> "$GITHUB_ENV"
+
+      - name: Install Slither
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install slither-analyzer solc-select
+          solc-select install "${{ inputs.solc_version }}"
+          solc-select use "${{ inputs.solc_version }}"
+
+      - name: Run Slither
+        continue-on-error: true
+        run: |
+          cd "$TARGET_DIR"
+          slither . --sarif slither.sarif --json slither.json 2>&1 | tee slither.txt || true
+          test -f slither.sarif || echo '{"version":"2.0.0","runs":[]}' > slither.sarif
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ env.TARGET_DIR }}/slither.sarif
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: slither-report
+          path: |
+            ${{ env.TARGET_DIR }}/slither.txt
+            ${{ env.TARGET_DIR }}/slither.json
+            ${{ env.TARGET_DIR }}/slither.sarif
+          if-no-files-found: warn

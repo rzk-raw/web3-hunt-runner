@@ -1,0 +1,74 @@
+name: Foundry build + test
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: 'Target repo to test, e.g. owner/repo (empty = this repo smoke test)'
+        required: false
+        default: ''
+        type: string
+      target_ref:
+        description: 'Branch, tag or commit of the target repo'
+        required: false
+        default: 'main'
+        type: string
+      fuzz_runs:
+        description: 'forge test fuzz runs'
+        required: false
+        default: '256'
+        type: string
+      extra_args:
+        description: 'Extra args passed to forge test, e.g. --match-test MyTest'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  foundry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout this runner repo
+        uses: actions/checkout@v4
+
+      - name: Clone target repo (if given)
+        if: inputs.target_repo != ''
+        run: |
+          git clone --depth 1 "https://github.com/${{ inputs.target_repo }}.git" target \
+            || git clone "https://github.com/${{ inputs.target_repo }}.git" target
+          cd target && git checkout "${{ inputs.target_ref }}" || true
+          echo "TARGET_DIR=target" >> "$GITHUB_ENV"
+
+      - name: Use local smoke-test contract (no target given)
+        if: inputs.target_repo == ''
+        run: echo "TARGET_DIR=." >> "$GITHUB_ENV"
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Forge build
+        continue-on-error: true
+        run: |
+          cd "$TARGET_DIR"
+          forge build 2>&1 | tee forge-build.log || true
+
+      - name: Forge test
+        continue-on-error: true
+        run: |
+          cd "$TARGET_DIR"
+          forge test --fuzz-runs "${{ inputs.fuzz_runs }}" ${{ inputs.extra_args }} 2>&1 | tee forge-test.log || true
+
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundry-logs
+          path: |
+            ${{ env.TARGET_DIR }}/forge-build.log
+            ${{ env.TARGET_DIR }}/forge-test.log
+          if-no-files-found: warn

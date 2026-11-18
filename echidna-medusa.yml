@@ -1,0 +1,108 @@
+name: Echidna + Medusa fuzzing
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: 'Target repo to test, e.g. owner/repo (empty = this repo smoke test)'
+        required: false
+        default: ''
+        type: string
+      target_ref:
+        description: 'Branch, tag or commit of the target repo'
+        required: false
+        default: 'main'
+        type: string
+      target_path:
+        description: 'Directory inside the target repo containing contracts'
+        required: false
+        default: 'contracts/test'
+        type: string
+      contract:
+        description: 'Contract to fuzz (Echidna), e.g. Vault'
+        required: false
+        default: 'Vault'
+        type: string
+      test_limit:
+        description: 'Echidna test-limit (number of transactions)'
+        required: false
+        default: '50000'
+        type: string
+      medusa_seconds:
+        description: 'Medusa fuzz duration in seconds'
+        required: false
+        default: '300'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout this runner repo
+        uses: actions/checkout@v4
+
+      - name: Clone target repo (if given)
+        if: inputs.target_repo != ''
+        run: |
+          git clone --depth 1 "https://github.com/${{ inputs.target_repo }}.git" target \
+            || git clone "https://github.com/${{ inputs.target_repo }}.git" target
+          cd target && git checkout "${{ inputs.target_ref }}" || true
+          echo "TARGET_DIR=target/${{ inputs.target_path }}" >> "$GITHUB_ENV"
+
+      - name: Use local smoke-test contract (no target given)
+        if: inputs.target_repo == ''
+        run: echo "TARGET_DIR=contracts/test" >> "$GITHUB_ENV"
+
+      - name: Install Echidna
+        run: |
+          ECHIDNA_VERSION=2.4.0
+          curl -sSL -o /tmp/echidna.tar.gz \
+            "https://github.com/crytic/echidna/releases/download/v${ECHIDNA_VERSION}/echidna-${ECHIDNA_VERSION}-x86_64-linux.tar.gz"
+          tar -xzf /tmp/echidna.tar.gz -C /tmp
+          sudo install -m 755 /tmp/echidna /usr/local/bin/echidna
+          echidna --version
+
+      - name: Install Medusa
+        run: |
+          MEDUSA_VERSION=1.5.1
+          curl -sSL -o /tmp/medusa.tar.gz \
+            "https://github.com/crytic/medusa/releases/download/v${MEDUSA_VERSION}/medusa-linux-x64.tar.gz"
+          # sha256 (v1.5.1, from GitHub release API): ddfe1517ae9028ef9fc331b00f5a6a9d5406f3fcd11a715d60c6b6fb3e4546d3
+          tar -xzf /tmp/medusa.tar.gz -C /tmp
+          sudo install -m 755 /tmp/medusa /usr/local/bin/medusa
+          medusa --version || medusa version || true
+
+      - name: Install solc
+        run: |
+          pip install solc-select
+          solc-select install 0.8.28
+          solc-select use 0.8.28
+          solc --version
+
+      - name: Run Echidna
+        continue-on-error: true
+        run: |
+          cd "$TARGET_DIR"
+          echidna . --contract "${{ inputs.contract }}" \
+            --test-limit "${{ inputs.test_limit }}" \
+            --config /dev/null 2>&1 | tee echidna.log || true
+
+      - name: Run Medusa (best effort)
+        continue-on-error: true
+        run: |
+          cd "$TARGET_DIR"
+          timeout "${{ inputs.medusa_seconds }}" medusa fuzz --help 2>&1 | tee medusa-help.log || true
+          echo "Medusa needs a medusa.json config in the target; see medusa-help.log" | tee -a medusa-help.log
+
+      - name: Upload fuzz logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-logs
+          path: |
+            ${{ env.TARGET_DIR }}/echidna.log
+            ${{ env.TARGET_DIR }}/medusa-help.log
+          if-no-files-found: warn

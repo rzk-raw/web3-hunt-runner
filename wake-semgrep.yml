@@ -1,0 +1,72 @@
+name: Wake + Semgrep scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: 'Target repo to test, e.g. owner/repo (empty = this repo smoke test)'
+        required: false
+        default: ''
+        type: string
+      target_ref:
+        description: 'Branch, tag or commit of the target repo'
+        required: false
+        default: 'main'
+        type: string
+      target_path:
+        description: 'Directory inside the target repo to scan'
+        required: false
+        default: '.'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout this runner repo
+        uses: actions/checkout@v4
+
+      - name: Clone target repo (if given)
+        if: inputs.target_repo != ''
+        run: |
+          git clone --depth 1 "https://github.com/${{ inputs.target_repo }}.git" target \
+            || git clone "https://github.com/${{ inputs.target_repo }}.git" target
+          cd target && git checkout "${{ inputs.target_ref }}" || true
+          echo "TARGET_DIR=target/${{ inputs.target_path }}" >> "$GITHUB_ENV"
+
+      - name: Use local smoke-test contract (no target given)
+        if: inputs.target_repo == ''
+        run: echo "TARGET_DIR=." >> "$GITHUB_ENV"
+
+      - name: Install Wake + Semgrep
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install eth-wake semgrep
+          wake --version || true
+          semgrep --version
+
+      - name: Run Wake
+        continue-on-error: true
+        run: |
+          cd "$TARGET_DIR"
+          wake detect 2>&1 | tee wake.log || true
+
+      - name: Run Semgrep
+        continue-on-error: true
+        run: |
+          cd "$TARGET_DIR"
+          semgrep --config auto --json -o semgrep.json . 2>&1 | tee semgrep.log || true
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: wake-semgrep-report
+          path: |
+            ${{ env.TARGET_DIR }}/wake.log
+            ${{ env.TARGET_DIR }}/semgrep.log
+            ${{ env.TARGET_DIR }}/semgrep.json
+          if-no-files-found: warn
