@@ -31,7 +31,7 @@ on:
       medusa_seconds:
         description: 'Medusa fuzz duration in seconds'
         required: false
-        default: '300'
+        default: '120'
         type: string
 
 permissions:
@@ -76,27 +76,42 @@ jobs:
           sudo install -m 755 /tmp/medusa /usr/local/bin/medusa
           medusa --version || medusa version || true
 
-      - name: Install solc
+      - name: Install solc + crytic-compile
         run: |
-          pip install solc-select
+          python3 -m pip install --upgrade pip
+          pip install solc-select crytic-compile
           solc-select install 0.8.28
           solc-select use 0.8.28
           solc --version
+          crytic-compile --version
 
       - name: Run Echidna
         continue-on-error: true
         run: |
           cd "$TARGET_DIR"
+          ls -R .
+          # Echidna needs crytic-compile (installed above) and a real
+          # contract file — the old run passed --config /dev/null and
+          # never compiled anything.
           echidna . --contract "${{ inputs.contract }}" \
             --test-limit "${{ inputs.test_limit }}" \
-            --config /dev/null 2>&1 | tee echidna.log || true
+            2>&1 | tee echidna.log || true
+          echo "--- echidna.log ---"
+          cat echidna.log
 
-      - name: Run Medusa (best effort)
+      - name: Run Medusa
         continue-on-error: true
         run: |
           cd "$TARGET_DIR"
-          timeout "${{ inputs.medusa_seconds }}" medusa fuzz --help 2>&1 | tee medusa-help.log || true
-          echo "Medusa needs a medusa.json config in the target; see medusa-help.log" | tee -a medusa-help.log
+          # Real fuzz campaign (not --help): compile the target dir,
+          # fuzz the named contract for medusa_seconds.
+          timeout "$(( ${{ inputs.medusa_seconds }} + 60 ))" medusa fuzz \
+            --compilation-target . \
+            --target-contracts "${{ inputs.contract }}" \
+            --timeout "${{ inputs.medusa_seconds }}" \
+            2>&1 | tee medusa.log || true
+          echo "--- medusa.log ---"
+          cat medusa.log
 
       - name: Upload fuzz logs
         uses: actions/upload-artifact@v4
@@ -104,5 +119,5 @@ jobs:
           name: fuzz-logs
           path: |
             ${{ env.TARGET_DIR }}/echidna.log
-            ${{ env.TARGET_DIR }}/medusa-help.log
+            ${{ env.TARGET_DIR }}/medusa.log
           if-no-files-found: warn
