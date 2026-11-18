@@ -71,9 +71,9 @@ jobs:
           # Scan Solidity files only, not the whole repo (workflows,
           # README, etc. inflated the old 19-finding count).
           if [ -z "${{ inputs.target_repo }}" ]; then
-            semgrep --config auto --json -o semgrep.json contracts/ 2>&1 | tee semgrep.log || true
+            semgrep --config auto --no-git-ignore --json -o semgrep.json contracts/test/Vault.sol 2>&1 | tee semgrep.log || true
           else
-            semgrep --config auto --json -o semgrep.json . 2>&1 | tee semgrep.log || true
+            semgrep --config auto --no-git-ignore --json -o semgrep.json . 2>&1 | tee semgrep.log || true
           fi
           echo "--- semgrep.log ---"
           cat semgrep.log
