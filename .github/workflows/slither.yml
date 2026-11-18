@@ -60,8 +60,18 @@ jobs:
         continue-on-error: true
         run: |
           cd "$TARGET_DIR"
-          slither . --sarif slither.sarif --json slither.json 2>&1 | tee slither.txt || true
+          # Slither does not recurse into subdirectories when given '.',
+          # so the smoke-test contract must be named explicitly.
+          if [ -z "${{ inputs.target_repo }}" ]; then
+            echo "Smoke test: analysing contracts/test/Vault.sol"
+            ls -R contracts
+            slither contracts/test/Vault.sol --sarif slither.sarif --json slither.json 2>&1 | tee slither.txt || true
+          else
+            slither . --sarif slither.sarif --json slither.json 2>&1 | tee slither.txt || true
+          fi
           test -f slither.sarif || echo '{"version":"2.0.0","runs":[]}' > slither.sarif
+          echo "--- slither.txt ---"
+          cat slither.txt
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
