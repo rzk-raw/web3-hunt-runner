@@ -53,13 +53,30 @@ jobs:
         continue-on-error: true
         run: |
           cd "$TARGET_DIR"
-          wake detect 2>&1 | tee wake.log || true
+          # 'wake detect' alone only prints help — it needs a
+          # subcommand ('all') and a path to scan.
+          if [ -z "${{ inputs.target_repo }}" ]; then
+            echo "Smoke test: Wake scanning contracts/"
+            wake detect all contracts/ 2>&1 | tee wake.log || true
+          else
+            wake detect all . 2>&1 | tee wake.log || true
+          fi
+          echo "--- wake.log ---"
+          cat wake.log
 
       - name: Run Semgrep
         continue-on-error: true
         run: |
           cd "$TARGET_DIR"
-          semgrep --config auto --json -o semgrep.json . 2>&1 | tee semgrep.log || true
+          # Scan Solidity files only, not the whole repo (workflows,
+          # README, etc. inflated the old 19-finding count).
+          if [ -z "${{ inputs.target_repo }}" ]; then
+            semgrep --config auto --json -o semgrep.json contracts/ 2>&1 | tee semgrep.log || true
+          else
+            semgrep --config auto --json -o semgrep.json . 2>&1 | tee semgrep.log || true
+          fi
+          echo "--- semgrep.log ---"
+          cat semgrep.log
 
       - name: Upload reports
         uses: actions/upload-artifact@v4
